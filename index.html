@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RC MediCall CRM</title>
+    <!-- Mantenemos Tailwind CDN por ahora para asegurar estilos rápidos sin configuración extra de postcss -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Usamos el CSS de react-datepicker localmente en index.tsx o mantenemos este como fallback -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/react-datepicker@7.6.0/dist/react-datepicker.min.css">
+    <style>
+      body {
+        font-family: 'Inter', sans-serif;
+        background-color: #f1f5f9; /* Slate 100 */
+      }
+      /* Custom Scrollbar for better aesthetics */
+      ::-webkit-scrollbar {
+          width: 8px;
+          height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+          background: #f1f5f9; 
+          border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb {
+          background: #cbd5e1; /* Slate 300 */
+          border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+          background: #94a3b8; /* Slate 400 */
+      }
+
+      /* Custom Scrollbar specifically for lists/containers to ensure it applies */
+      .no-scrollbar::-webkit-scrollbar {
+          display: none;
+      }
+      .no-scrollbar {
+          -ms-overflow-style: none;  /* IE and Edge */
+          scrollbar-width: none;  /* Firefox */
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .animate-fadeIn {
+        animation: fadeIn 0.3s ease-out forwards;
+      }
+      
+      /* --- GLOBAL INPUT FIX --- */
+      /* Forzar color de texto oscuro en todos los inputs para evitar blanco sobre blanco */
+      /* Usamos !important y selectores específicos para sobrescribir estilos de User Agent (Modo Oscuro) */
+      input:not(.text-white):not([type="checkbox"]):not([type="radio"]), 
+      textarea:not(.text-white), 
+      select:not(.text-white) {
+          color: #0f172a !important; /* Slate 900 */
+          background-color: #ffffff; /* Fondo blanco por defecto */
+      }
+
+      /* Asegurar que las opciones de los select también sean legibles */
+      option {
+          color: #0f172a !important;
+          background-color: #ffffff !important;
+      }
+
+      /* Excepción para inputs con clase text-white explícita (como en Login) */
+      .text-white {
+          color: #ffffff !important;
+      }
+
+      /* DatePicker Custom Overrides */
+      .react-datepicker-wrapper {
+        width: 100%;
+      }
+      .react-datepicker__input-container input {
+        width: 100%;
+        border-radius: 0.75rem; /* rounded-xl */
+        padding: 0.75rem; /* p-3 */
+        border: 1px solid #e2e8f0; /* border-slate-200 */
+        background-color: #f8fafc; /* bg-slate-50 */
+        font-size: 0.875rem; /* text-sm */
+        font-weight: 500;
+        outline: none;
+        transition: all 0.2s;
+        text-transform: uppercase;
+        color: #0f172a !important; /* Force dark text in datepicker */
+        cursor: pointer;
+      }
+      .react-datepicker__input-container input:focus {
+        border-color: #3b82f6; /* blue-500 */
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+        background-color: #ffffff;
+      }
+      .react-datepicker-popper {
+        z-index: 9999 !important;
+      }
+      .react-datepicker {
+        font-family: 'Inter', sans-serif;
+        border-radius: 1rem;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+      }
+      .react-datepicker__header {
+        background-color: #f1f5f9;
+        border-bottom: 1px solid #e2e8f0;
+      }
+      .react-datepicker__day--selected, .react-datepicker__day--keyboard-selected {
+        background-color: #2563eb !important; /* blue-600 */
+        border-radius: 0.5rem;
+      }
+      .react-datepicker__day:hover {
+        background-color: #eff6ff !important;
+        border-radius: 0.5rem;
+        color: #2563eb;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react-router-dom": "https://esm.sh/react-router-dom@^7.13.0",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
+    "vite": "https://esm.sh/vite@^7.3.1",
+    "date-fns": "https://esm.sh/date-fns@^4.1.0",
+    "date-fns/": "https://esm.sh/date-fns@^4.1.0/",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4",
+    "react-datepicker": "https://esm.sh/react-datepicker@^9.1.0"
+  }
+}
+</script>
+</head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/index.tsx"></script>
+  </body>
+</html>
