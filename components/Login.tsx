@@ -105,10 +105,10 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
           <button 
             type="submit"
-            className="w-full group relative flex justify-center py-3.5 px-4 border border-transparent text-sm font-bold rounded-xl text-white bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-cyan-500 shadow-lg shadow-cyan-500/30 transition-all duration-300 transform hover:-translate-y-1"
+            className="w-full group relative flex justify-center py-3.5 px-4 border border-transparent text-sm font-bold rounded-xl text-white bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 shadow-lg shadow-red-500/30 transition-all duration-300 transform hover:-translate-y-1"
           >
             <span className="absolute left-0 inset-y-0 flex items-center pl-3">
-              <ArrowRight className="h-5 w-5 text-cyan-200 group-hover:text-white transition-colors" />
+              <ArrowRight className="h-5 w-5 text-red-200 group-hover:text-white transition-colors" />
             </span>
             Iniciar Sesión
           </button>

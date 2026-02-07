@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Doctor, Visit, User, TimeOffEvent } from '../types';
-import { ChevronLeft, ChevronRight, Plus, Check, Search, Edit3, Calendar, ExternalLink, X, Lock, Clock, MapPin, Coffee, CalendarClock, CheckCircle2, User as UserIcon, Trash2, Building, Briefcase, ArrowRightLeft, AlertCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Check, Search, Edit3, Calendar, ExternalLink, X, Lock, Clock, MapPin, Coffee, CalendarClock, CheckCircle2, User as UserIcon, Trash2, Building, Briefcase } from 'lucide-react';
 import DatePicker, { registerLocale } from 'react-datepicker';
 import es from 'date-fns/locale/es';
 
@@ -27,14 +27,13 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAppointmentMode, setIsAppointmentMode] = useState(false); 
   const [selectedDayForPlan, setSelectedDayForPlan] = useState<number | null>(null);
-  
-  // NEW STATE: Plan Date specifically for the modal
-  const [planDate, setPlanDate] = useState<Date>(new Date());
-
   const [selectedDoctorId, setSelectedDoctorId] = useState('');
   const [searchDoctorTerm, setSearchDoctorTerm] = useState('');
   const [planObjective, setPlanObjective] = useState('');
   const [appointmentTime, setAppointmentTime] = useState('09:00');
+
+  // Edit Appointment State (Stores the original state before editing)
+  const [editingAppointment, setEditingAppointment] = useState<{docId: string, visit: Visit} | null>(null);
 
   const [reportModalOpen, setReportModalOpen] = useState(false);
   const [selectedVisitToReport, setSelectedVisitToReport] = useState<{docId: string, visit: Visit} | null>(null);
@@ -42,14 +41,10 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
   const [reportOutcome, setReportOutcome] = useState('SEGUIMIENTO');
   const [reportFollowUp, setReportFollowUp] = useState('');
   const [reportDate, setReportDate] = useState('');
-  const [reportTime, setReportTime] = useState(''); 
+  const [reportTime, setReportTime] = useState('');
   const [isEditingPlan, setIsEditingPlan] = useState(false);
   const [editObjective, setEditObjective] = useState('');
   
-  // Logic for move appointment to another contact
-  const [editDoctorId, setEditDoctorId] = useState(''); 
-  const [searchEditDoctorTerm, setSearchEditDoctorTerm] = useState('');
-
   // Next Visit Planning State
   const [nextVisitDate, setNextVisitDate] = useState<Date | null>(null);
   const [nextVisitTime, setNextVisitTime] = useState('09:00');
@@ -65,14 +60,14 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
   });
   const [selectedTimeOff, setSelectedTimeOff] = useState<TimeOffEvent | null>(null);
 
-  // Storage Key Consistent with App.tsx
   const TIMEOFF_STORAGE_KEY = 'rc_medicall_timeoff_v5';
 
+  // Updated Time Slots: 09:00 - 20:00 every 30 mins
   const generateTimeSlots = () => {
       const slots = [];
-      for (let hour = 9; hour <= 21; hour++) {
+      for (let hour = 9; hour <= 20; hour++) {
           slots.push(`${hour.toString().padStart(2, '0')}:00`);
-          if (hour !== 21) {
+          if (hour !== 20) {
               slots.push(`${hour.toString().padStart(2, '0')}:30`);
           }
       }
@@ -80,6 +75,9 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
   };
   const visitTimeSlots = useMemo(() => generateTimeSlots(), []);
   
+  // Restricted slots for Appointments (Citas)
+  const appointmentTimeSlots = ['09:00', '16:00'];
+
   const executives = useMemo(() => {
     const execs = new Set(doctors.map(d => d.executive));
     return Array.from(execs).sort();
@@ -111,73 +109,10 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
       return timeOffEvents.filter(t => t.executive === selectedExecutive);
   }, [timeOffEvents, selectedExecutive]);
 
-  // --- PERFORMANCE OPTIMIZATION: Event Map ---
-  // Instead of recalculating events for every single day cell render,
-  // we pre-calculate a map of DateString -> Events[]
-  const eventsMap = useMemo(() => {
-      const map = new Map<string, { type: 'visit' | 'timeoff', data: any }[]>();
-
-      // 1. Map Visits
-      myDoctors.forEach(doc => {
-          const visits = doc.visits || [];
-          visits.forEach(visit => {
-              if (visit.date) {
-                  if (!map.has(visit.date)) map.set(visit.date, []);
-                  map.get(visit.date)!.push({
-                      type: 'visit',
-                      data: { docId: doc.id, docName: doc.name, docCategory: doc.category, visit, address: doc.address }
-                  });
-              }
-          });
-      });
-
-      // 2. Map TimeOffs (Range expansion)
-      myTimeOffs.forEach(toff => {
-          let curr = new Date(toff.startDate);
-          const end = new Date(toff.endDate);
-          
-          while (curr <= end) {
-              const dateStr = curr.toISOString().split('T')[0];
-              if (!map.has(dateStr)) map.set(dateStr, []);
-              map.get(dateStr)!.push({ type: 'timeoff', data: toff });
-              curr.setDate(curr.getDate() + 1);
-          }
-      });
-
-      // 3. Sort Events within each day
-      map.forEach((events) => {
-          events.sort((a, b) => {
-              if (a.type === 'timeoff' && b.type !== 'timeoff') return -1;
-              if (a.type !== 'timeoff' && b.type === 'timeoff') return 1;
-
-              if (a.type === 'visit' && b.type === 'visit') {
-                  const timeA = a.data.visit.time || '23:59';
-                  const timeB = b.data.visit.time || '23:59';
-                  if (timeA !== timeB) return timeA.localeCompare(timeB);
-                  if (a.data.visit.status === 'completed' && b.data.visit.status !== 'completed') return 1;
-                  if (a.data.visit.status !== 'completed' && b.data.visit.status === 'completed') return -1;
-              }
-              return 0;
-          });
-      });
-
-      return map;
-  }, [myDoctors, myTimeOffs]);
-
-  const getEventsForDate = (date: Date) => {
-      const dateStr = date.toISOString().split('T')[0];
-      return eventsMap.get(dateStr) || [];
-  };
-
   const filteredDoctorsForModal = useMemo(() => {
       if (!searchDoctorTerm) return [];
       return myDoctors.filter(d => d.name.toLowerCase().includes(searchDoctorTerm.toLowerCase()));
   }, [myDoctors, searchDoctorTerm]);
-
-  const filteredDoctorsForEdit = useMemo(() => {
-      if (!searchEditDoctorTerm) return [];
-      return myDoctors.filter(d => d.name.toLowerCase().includes(searchEditDoctorTerm.toLowerCase()));
-  }, [myDoctors, searchEditDoctorTerm]);
 
   const getDaysForView = (): (Date | null)[] => {
       const year = currentDate.getFullYear();
@@ -230,6 +165,16 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
       return `${year}-${month}-${day}`;
   };
 
+  const isDateInRange = (checkDate: string, start: string, end: string) => {
+      return checkDate >= start && checkDate <= end;
+  };
+
+  const parseDateString = (dateStr: string) => {
+      if (!dateStr) return new Date();
+      const [year, month, day] = dateStr.split('-').map(Number);
+      return new Date(year, month - 1, day);
+  };
+
   const formatDateToString = (date: Date | null) => {
       if (!date) return '';
       const year = date.getFullYear();
@@ -238,29 +183,53 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
       return `${year}-${month}-${day}`;
   };
 
+  const getEventsForDate = (date: Date) => {
+      const dateStr = toLocalDateString(date);
+      const events: { type: 'visit' | 'timeoff', data: any }[] = [];
+      
+      myDoctors.forEach(doc => {
+          const visits = doc.visits || [];
+          visits.forEach(visit => {
+              if (visit.date === dateStr) {
+                  events.push({ type: 'visit', data: { docId: doc.id, docName: doc.name, docCategory: doc.category, visit, address: doc.address } });
+              }
+          });
+      });
+
+      myTimeOffs.forEach(toff => {
+          if (isDateInRange(dateStr, toff.startDate, toff.endDate)) {
+              events.push({ type: 'timeoff', data: toff });
+          }
+      });
+
+      return events.sort((a, b) => {
+          if (a.type === 'timeoff' && b.type !== 'timeoff') return -1;
+          if (a.type !== 'timeoff' && b.type === 'timeoff') return 1;
+
+          if (a.type === 'visit' && b.type === 'visit') {
+              const timeA = a.data.visit.time || '23:59';
+              const timeB = b.data.visit.time || '23:59';
+              if (timeA !== timeB) return timeA.localeCompare(timeB);
+              if (a.data.visit.status === 'completed' && b.data.visit.status !== 'completed') return 1;
+              if (a.data.visit.status !== 'completed' && b.data.visit.status === 'completed') return -1;
+          }
+          return 0;
+      });
+  };
+
+  // Triggered when clicking a day or "Programar Cita" button
   const handleDayClick = (date: Date, asAppointment = false) => {
       setSelectedDayForPlan(date.getDate());
-      setPlanDate(date); 
-      // Force update mode logic
-      if (asAppointment) {
-          setIsAppointmentMode(true);
-          setPlanObjective('CITA DE CONTACTO');
-          setAppointmentTime('09:00'); // Force reset time for appointment mode
-      } else {
-          setIsAppointmentMode(false);
-          setPlanObjective('');
-          setAppointmentTime('09:00');
-      }
+      setCurrentDate(new Date(date)); 
+      setIsAppointmentMode(asAppointment);
       setIsModalOpen(true); 
       setSelectedDoctorId('');
       setSearchDoctorTerm('');
-  };
-
-  const setAppointmentMode = (enabled: boolean) => {
-      setIsAppointmentMode(enabled);
-      if (enabled) {
+      setEditingAppointment(null); // Reset editing state
+      
+      if (asAppointment) {
           setPlanObjective('CITA DE CONTACTO');
-          setAppointmentTime('09:00'); // Force 9am when switching to appointment
+          setAppointmentTime('09:00'); // Default to allowed slot
       } else {
           setPlanObjective('');
           setAppointmentTime('09:00');
@@ -272,50 +241,95 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
       handleDayClick(currentDate, false);
   };
 
+  // Triggered when clicking a "CITA" chip (pink event)
+  const handleEditAppointment = (docId: string, visit: Visit) => {
+      const doc = doctors.find(d => d.id === docId);
+      
+      setSelectedDayForPlan(parseDateString(visit.date).getDate());
+      setCurrentDate(parseDateString(visit.date));
+      setIsAppointmentMode(true);
+      setIsModalOpen(true);
+      
+      setSelectedDoctorId(docId);
+      setSearchDoctorTerm(doc ? doc.name : '');
+      setAppointmentTime(visit.time || '09:00');
+      setPlanObjective(visit.objective || 'CITA DE CONTACTO');
+      
+      setEditingAppointment({ docId, visit });
+  };
+
   const savePlan = () => {
-      if (!selectedDoctorId) {
+      if (!selectedDayForPlan || !selectedDoctorId) {
           alert("Seleccione un contacto.");
           return;
       }
-      
-      const finalObjective = isAppointmentMode ? 'CITA DE CONTACTO' : planObjective;
-
-      if (!finalObjective.trim()) {
+      if (!planObjective.trim()) {
           alert("El objetivo es obligatorio.");
           return;
       }
       
-      // Use planDate instead of selectedDayForPlan/currentDate
-      const year = planDate.getFullYear();
-      const month = String(planDate.getMonth() + 1).padStart(2, '0');
-      const day = String(planDate.getDate()).padStart(2, '0');
+      const year = currentDate.getFullYear();
+      const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+      const day = String(selectedDayForPlan).padStart(2, '0');
       const dateStr = `${year}-${month}-${day}`;
       
-      const updatedDoctors = doctors.map(doc => {
-          if (doc.id === selectedDoctorId) {
-              const newVisit: Visit = {
-                  id: Date.now().toString(),
-                  date: dateStr,
-                  time: appointmentTime,
-                  note: isAppointmentMode ? 'CITA PROGRAMADA' : 'Visita Planeada',
-                  objective: finalObjective.toUpperCase(),
-                  outcome: isAppointmentMode ? 'CITA' : 'PLANEADA',
-                  status: 'planned'
-              };
-              const currentVisits = doc.visits || [];
-              return { ...doc, visits: [...currentVisits, newVisit] };
-          }
-          return doc;
-      });
+      if (editingAppointment) {
+          // Reassign Logic: Remove from old doctor, add to new doctor
+          const doctorsWithoutOldVisit = doctors.map(doc => {
+              if (doc.id === editingAppointment.docId) {
+                  return { ...doc, visits: doc.visits.filter(v => v.id !== editingAppointment.visit.id) };
+              }
+              return doc;
+          });
 
-      onUpdateDoctors(updatedDoctors);
-      setIsModalOpen(false);
-      alert(isAppointmentMode ? "Cita programada correctamente." : "Visita agendada correctamente.");
+          const finalDoctors = doctorsWithoutOldVisit.map(doc => {
+               if (doc.id === selectedDoctorId) {
+                   const updatedVisit: Visit = {
+                       ...editingAppointment.visit,
+                       date: dateStr,
+                       time: appointmentTime, // Will be 9:00 or 16:00
+                       objective: planObjective.toUpperCase(), // Will be 'CITA DE CONTACTO'
+                       outcome: 'CITA',
+                       status: 'planned'
+                   };
+                   return { ...doc, visits: [...doc.visits, updatedVisit] };
+               }
+               return doc;
+          });
+
+          onUpdateDoctors(finalDoctors);
+          setIsModalOpen(false);
+          alert("Cita reasignada correctamente.");
+
+      } else {
+          // Create New Logic
+          const updatedDoctors = doctors.map(doc => {
+              if (doc.id === selectedDoctorId) {
+                  const newVisit: Visit = {
+                      id: Date.now().toString(),
+                      date: dateStr,
+                      time: appointmentTime,
+                      note: isAppointmentMode ? 'CITA PROGRAMADA' : 'Visita Planeada',
+                      objective: planObjective.toUpperCase(),
+                      outcome: isAppointmentMode ? 'CITA' : 'PLANEADA',
+                      status: 'planned'
+                  };
+                  const currentVisits = doc.visits || [];
+                  return { ...doc, visits: [...currentVisits, newVisit] };
+              }
+              return doc;
+          });
+
+          onUpdateDoctors(updatedDoctors);
+          setIsModalOpen(false);
+          alert(isAppointmentMode ? "Cita programada correctamente." : "Visita agendada correctamente.");
+      }
   };
 
   const openReportModal = (docId: string, visit: Visit) => {
-      const doc = doctors.find(d => d.id === docId);
-      
+      // Do not open report modal for Appointments, redirect to edit handler instead or do nothing (handled by click logic)
+      if ((visit.outcome as string) === 'CITA') return; 
+
       setSelectedVisitToReport({ docId, visit });
       setReportNote(visit.note === 'Visita Planeada' || visit.note === 'CITA PROGRAMADA' ? '' : visit.note);
       
@@ -327,11 +341,6 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
       setReportTime(visit.time || '');
       setIsEditingPlan(false);
       setEditObjective(visit.objective || '');
-      
-      // Init Edit/Move Contact fields
-      setEditDoctorId(docId);
-      setSearchEditDoctorTerm(doc ? doc.name : '');
-
       setNextVisitDate(null);
       setNextVisitTime('09:00'); 
       setReportModalOpen(true);
@@ -354,46 +363,19 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
           return;
       }
 
-      // Logic to move visit if doctor changed
-      if (editDoctorId !== selectedVisitToReport.docId) {
-          // 1. Remove from old doctor
-          let visitToMove: Visit | undefined;
-          const doctorsAfterRemove = doctors.map(doc => {
-              if (doc.id === selectedVisitToReport.docId) {
-                  const v = doc.visits.find(v => v.id === selectedVisitToReport.visit.id);
-                  if (v) visitToMove = { ...v, date: reportDate, time: reportTime, objective: editObjective.toUpperCase() };
-                  return { ...doc, visits: doc.visits.filter(v => v.id !== selectedVisitToReport.visit.id) };
-              }
-              return doc;
-          });
-
-          // 2. Add to new doctor
-          if (visitToMove) {
-              const finalDoctors = doctorsAfterRemove.map(doc => {
-                  if (doc.id === editDoctorId) {
-                      return { ...doc, visits: [...doc.visits, visitToMove!] };
+      const updatedDoctors = doctors.map(doc => {
+          if (doc.id === selectedVisitToReport.docId) {
+              const updatedVisits = (doc.visits || []).map(v => {
+                  if (v.id === selectedVisitToReport.visit.id) {
+                      return { ...v, date: reportDate, time: reportTime, objective: editObjective.toUpperCase() };
                   }
-                  return doc;
+                  return v;
               });
-              onUpdateDoctors(finalDoctors);
+              return { ...doc, visits: updatedVisits };
           }
-      } else {
-          // Normal update
-          const updatedDoctors = doctors.map(doc => {
-              if (doc.id === selectedVisitToReport.docId) {
-                  const updatedVisits = (doc.visits || []).map(v => {
-                      if (v.id === selectedVisitToReport.visit.id) {
-                          return { ...v, date: reportDate, time: reportTime, objective: editObjective.toUpperCase() };
-                      }
-                      return v;
-                  });
-                  return { ...doc, visits: updatedVisits };
-              }
-              return doc;
-          });
-          onUpdateDoctors(updatedDoctors);
-      }
-      
+          return doc;
+      });
+      onUpdateDoctors(updatedDoctors);
       setReportModalOpen(false);
   }
 
@@ -549,30 +531,35 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
       const isAppointment = !isTimeOff && isCita(evt.data.visit);
       
       const chipClasses = isSlot 
-        ? `absolute left-0 right-0 mx-2 p-2 rounded shadow-sm transition-colors z-10 border-l-4 ${
+        ? `absolute left-0 right-0 mx-2 p-2 rounded shadow-sm cursor-pointer transition-colors z-10 border-l-4 ${
             isAppointment 
-            ? 'bg-pink-100 border-pink-500 hover:bg-pink-200 cursor-pointer' 
+            ? 'bg-pink-100 border-pink-500 hover:bg-pink-200 cursor-default' 
             : (isCompleted 
-                ? 'bg-green-100 border-green-500 hover:bg-green-200 cursor-pointer' 
-                : 'bg-blue-100 border-blue-500 hover:bg-blue-200 cursor-grab active:cursor-grabbing')
+                ? 'bg-green-100 border-green-500 hover:bg-green-200' 
+                : 'bg-blue-100 border-blue-500 hover:bg-blue-200')
           }`
-        : `px-2 py-1 rounded text-[8px] font-bold border shadow-sm flex items-center gap-1 transition-all hover:scale-[1.02] relative pr-1 w-full mb-1 ${
+        : `px-2 py-1 rounded text-[8px] font-bold border shadow-sm flex items-center gap-1 transition-all hover:scale-[1.02] relative pr-1 cursor-grab active:cursor-grabbing w-full mb-1 ${
             isTimeOff 
-            ? 'bg-gradient-to-r from-orange-50 to-orange-100 border-orange-200 text-orange-800 cursor-grab active:cursor-grabbing'
+            ? 'bg-gradient-to-r from-orange-50 to-orange-100 border-orange-200 text-orange-800'
             : (isAppointment 
-                ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white border-transparent shadow-pink-300 cursor-pointer' 
+                ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white border-transparent shadow-pink-300' 
                 : (isCompleted
-                    ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white border-transparent shadow-emerald-300 cursor-pointer' 
-                    : 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white border-transparent shadow-blue-200 cursor-grab active:cursor-grabbing'))
+                    ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white border-transparent shadow-emerald-300' 
+                    : 'bg-gradient-to-r from-blue-500 to-indigo-600 text-white border-transparent shadow-blue-200'))
         }`;
 
       return (
         <div 
             key={i}
-            draggable={!isAppointment} // Appointment (Cita) cannot be dragged
-            onDragStart={(e) => !isAppointment && handleDragStart(e, evt.data.docId, evt.data.visit)}
+            draggable
+            onDragStart={(e) => handleDragStart(e, evt.data.docId, evt.data.visit)}
             onDragEnd={handleDragEnd}
-            onClick={(e) => { e.stopPropagation(); isTimeOff ? setSelectedTimeOff(evt.data) : openReportModal(evt.data.docId, evt.data.visit); }}
+            onClick={(e) => { 
+                e.stopPropagation(); 
+                if (isTimeOff) setSelectedTimeOff(evt.data);
+                else if (isAppointment) handleEditAppointment(evt.data.docId, evt.data.visit);
+                else openReportModal(evt.data.docId, evt.data.visit); 
+            }}
             className={chipClasses}
         >
             {isSlot ? (
@@ -600,8 +587,10 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
 
   return (
     <div className="space-y-6 pb-10 relative">
+
        {/* TOOLBAR */}
        <div className="flex flex-col xl:flex-row justify-between items-center bg-white/80 backdrop-blur-xl p-4 rounded-3xl border border-white/50 shadow-lg shadow-blue-500/5 gap-4">
+           {/* ... (Toolbar code same as before) ... */}
            <div className="text-center xl:text-left">
                <h1 className="text-xl md:text-2xl font-black text-slate-800 tracking-tight">Calendario</h1>
                <p className="text-xs md:text-sm text-slate-500 font-medium">Gestión de rutas y tiempos.</p>
@@ -652,6 +641,7 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
 
        {/* CALENDAR VIEW */}
        <div className="bg-white/90 backdrop-blur-md rounded-3xl border border-white/50 shadow-xl shadow-slate-200/50 overflow-hidden flex flex-col h-[600px]">
+           {/* ... Header Navigation ... */}
            <div className="flex justify-between items-center p-4 md:p-6 border-b border-slate-100 sticky top-0 z-20 bg-white/95 backdrop-blur">
                <button onClick={prevPeriod} className="p-2 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors text-slate-600"><ChevronLeft className="h-5 w-5" /></button>
                <h2 className="text-lg md:text-xl font-black text-slate-800 capitalize tracking-tight text-center">{getHeaderTitle()}</h2>
@@ -660,6 +650,7 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
 
            <div className="flex-1 overflow-auto bg-slate-50/30">
                <div className={`h-full flex flex-col ${viewMode !== 'day' ? 'min-w-[800px]' : 'min-w-full'}`}>
+                   {/* Headers for Month/Week */}
                    {viewMode !== 'day' && (
                        <div className="grid grid-cols-7 border-b border-slate-100 bg-slate-50/50 flex-shrink-0">
                            {['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'].map(d => (
@@ -678,6 +669,7 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
                            if (viewMode === 'day' && day) {
                                return (
                                    <div key={idx} className="flex-1 bg-white p-4 md:p-8 animate-fadeIn flex">
+                                       {/* Time Column */}
                                        <div className="w-24 flex-shrink-0 border-r border-slate-100 pr-4 pt-2">
                                            {visitTimeSlots.map(time => (
                                                <div key={time} className="h-24 text-xs font-bold text-slate-400 flex items-start justify-between group relative">
@@ -693,12 +685,14 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
                                            ))}
                                        </div>
 
+                                       {/* Events Column */}
                                        <div className="flex-1 pl-4 relative pt-2">
+                                            {/* Grid Lines */}
                                             {visitTimeSlots.map((time, tIdx) => (
                                                  <div 
                                                     key={`line-${time}`} 
                                                     className="absolute w-full border-t border-slate-100"
-                                                    style={{ top: `${tIdx * 6}rem` }}
+                                                    style={{ top: `${tIdx * 6}rem` }} // h-24 is 6rem
                                                  ></div>
                                             ))}
                                             
@@ -723,6 +717,7 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
                            
                            if (!day) return null;
 
+                           // Month/Week View Cell
                            return (
                                <div key={idx} 
                                    onDragOver={handleDragOver}
@@ -750,52 +745,24 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
            </div>
        </div>
 
-       {/* 1. Plan Visit Modal (OPTIMIZED) */}
+       {/* 1. Plan Visit Modal */}
        {isModalOpen && (
            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
                    <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                        <h3 className="text-lg font-black text-slate-800 flex items-center">
                            {isAppointmentMode ? <Clock className="w-5 h-5 mr-2 text-pink-500" /> : <Calendar className="w-5 h-5 mr-2 text-blue-500" />}
-                           {isAppointmentMode ? 'Programar Cita' : 'Planear Visita'}
+                           {isAppointmentMode ? (editingAppointment ? 'Editar Cita' : 'Programar Cita') : 'Planear Visita'}
                        </h3>
                        <button onClick={() => setIsModalOpen(false)}><X className="w-6 h-6 text-slate-400 hover:text-slate-600" /></button>
                    </div>
-                   
                    <div className="p-6 space-y-4 overflow-y-auto">
-                        {/* MODE TOGGLE */}
-                        <div className="flex bg-slate-100 p-1 rounded-xl mb-4">
-                            <button 
-                                onClick={() => setAppointmentMode(false)}
-                                className={`flex-1 py-2 text-xs font-black uppercase rounded-lg transition-all ${!isAppointmentMode ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                            >
-                                Visita Rutinaria
-                            </button>
-                            <button 
-                                onClick={() => setAppointmentMode(true)}
-                                className={`flex-1 py-2 text-xs font-black uppercase rounded-lg transition-all ${isAppointmentMode ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}
-                            >
-                                Cita de Contacto
-                            </button>
-                        </div>
-
                         {isAppointmentMode && (
-                           <div className="bg-pink-50 p-3 rounded-xl border border-pink-100 flex items-center text-pink-700 text-xs font-bold animate-fadeIn">
-                               <AlertCircle className="w-4 h-4 mr-2" />
-                               Modo Cita: Horarios y Objetivo Restringidos
+                           <div className="bg-pink-50 p-3 rounded-xl border border-pink-100 flex items-center text-pink-700 text-xs font-bold">
+                               <Lock className="w-4 h-4 mr-2" />
+                               {editingAppointment ? 'Modo Edición - Cambio de Contacto' : 'Cita Bloqueada - Prioridad Alta'}
                            </div>
                         )}
-
-                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Fecha Programada</label>
-                            <DatePicker 
-                                selected={planDate} 
-                                onChange={(date) => date && setPlanDate(date)} 
-                                dateFormat="dd 'de' MMMM, yyyy"
-                                locale="es"
-                                className="w-full bg-white border border-slate-300 rounded-xl p-3 text-sm font-bold text-black uppercase cursor-pointer focus:ring-2 focus:ring-blue-500 outline-none"
-                            />
-                        </div>
 
                         <div>
                             <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Contacto</label>
@@ -806,11 +773,11 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
                                     placeholder="BUSCAR MÉDICO..." 
                                     value={searchDoctorTerm} 
                                     onChange={(e) => setSearchDoctorTerm(e.target.value.toUpperCase())}
-                                    className="w-full pl-10 border border-slate-300 bg-white rounded-xl p-3 text-sm font-bold uppercase focus:ring-2 focus:ring-blue-500 outline-none transition-all text-black"
+                                    className="w-full pl-10 border border-slate-200 bg-slate-50 rounded-xl p-3 text-sm font-bold uppercase focus:ring-2 focus:ring-blue-500 outline-none"
                                 />
                             </div>
                             {searchDoctorTerm && (
-                                <div className="mt-2 max-h-40 overflow-y-auto border border-slate-100 rounded-xl bg-white shadow-lg relative z-20">
+                                <div className="mt-2 max-h-40 overflow-y-auto border border-slate-100 rounded-xl bg-white shadow-lg">
                                     {filteredDoctorsForModal.map(doc => (
                                         <div 
                                             key={doc.id} 
@@ -828,56 +795,27 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
                             )}
                         </div>
 
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Hora</label>
-                                <div className="relative">
-                                    <Clock className="absolute left-3 top-3.5 h-4 w-4 text-slate-600 z-10" />
-                                    {isAppointmentMode ? (
-                                        <select 
-                                            key="appointment-select"
-                                            value={appointmentTime} 
-                                            onChange={(e) => setAppointmentTime(e.target.value)}
-                                            className="w-full pl-9 border border-slate-400 bg-white rounded-xl p-3 text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none appearance-none text-black opacity-100"
-                                            style={{ color: 'black', backgroundColor: 'white' }}
-                                        >
-                                            <option value="09:00" className="text-black bg-white">09:00 AM</option>
-                                            <option value="16:00" className="text-black bg-white">04:00 PM</option>
-                                        </select>
-                                    ) : (
-                                        <select 
-                                            key="routine-select"
-                                            value={appointmentTime} 
-                                            onChange={(e) => setAppointmentTime(e.target.value)}
-                                            className="w-full pl-9 border border-slate-400 bg-white rounded-xl p-3 text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none appearance-none text-black opacity-100"
-                                            style={{ color: 'black', backgroundColor: 'white' }}
-                                        >
-                                            {visitTimeSlots.map(t => (
-                                                <option key={t} value={t} className="text-black bg-white">{t}</option>
-                                            ))}
-                                        </select>
-                                    )}
-                                </div>
-                            </div>
-                            <div className="flex items-end pb-1">
-                                {isAppointmentMode && (
-                                    <span className="text-[10px] text-pink-500 font-bold bg-pink-50 px-2 py-1 rounded-lg">
-                                        * Solo 9:00 AM o 4:00 PM
-                                    </span>
-                                )}
-                            </div>
+                        <div>
+                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Hora</label>
+                            <select 
+                                value={appointmentTime} 
+                                onChange={(e) => setAppointmentTime(e.target.value)}
+                                disabled={!!editingAppointment} // Locked if editing existing appointment
+                                className={`w-full border border-slate-200 bg-white rounded-xl p-3 text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none ${!!editingAppointment ? 'bg-slate-100 cursor-not-allowed text-slate-500' : ''}`}
+                            >
+                                {(isAppointmentMode ? appointmentTimeSlots : visitTimeSlots).map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
                         </div>
 
                         <div>
                             <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Objetivo</label>
                             <textarea 
                                 rows={2}
-                                value={isAppointmentMode ? "CITA DE CONTACTO" : planObjective}
-                                onChange={(e) => !isAppointmentMode && setPlanObjective(e.target.value.toUpperCase())}
-                                disabled={isAppointmentMode}
-                                className={`w-full border border-slate-400 rounded-xl p-3 text-sm uppercase font-bold focus:ring-2 focus:ring-blue-500 outline-none resize-none text-black placeholder-slate-500 opacity-100 ${isAppointmentMode ? 'bg-slate-200 cursor-not-allowed text-slate-600' : 'bg-white'}`}
-                                placeholder={isAppointmentMode ? "CITA DE CONTACTO" : "OBJETIVO DE LA VISITA..."}
-                                style={{ color: 'black' }}
+                                value={planObjective}
+                                onChange={(e) => setPlanObjective(e.target.value.toUpperCase())}
+                                disabled={isAppointmentMode} // Locked if Appointment mode
+                                className={`w-full border border-slate-200 rounded-xl p-3 text-sm uppercase font-medium focus:ring-2 focus:ring-blue-500 outline-none resize-none ${isAppointmentMode ? 'bg-slate-100 cursor-not-allowed text-slate-500' : 'bg-white'}`}
+                                placeholder={isAppointmentMode ? "MOTIVO DE LA CITA..." : "OBJETIVO DE LA VISITA..."}
                             />
                         </div>
                    </div>
@@ -922,58 +860,26 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
                        <div className="grid grid-cols-2 gap-4">
                            <div>
                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Fecha</label>
-                               <input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} className="w-full border border-slate-300 rounded-xl p-2.5 text-sm font-bold bg-white text-black" />
+                               <input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} className="w-full border border-slate-200 rounded-xl p-2.5 text-sm font-bold bg-slate-50" />
                            </div>
                            <div>
                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hora</label>
-                               <select value={reportTime} onChange={(e) => setReportTime(e.target.value)} className="w-full border border-slate-300 rounded-xl p-2.5 text-sm font-bold bg-white text-black">
+                               <select value={reportTime} onChange={(e) => setReportTime(e.target.value)} className="w-full border border-slate-200 rounded-xl p-2.5 text-sm font-bold bg-slate-50">
                                    {visitTimeSlots.map(t => <option key={t} value={t}>{t}</option>)}
                                </select>
                            </div>
                        </div>
 
                        {isEditingPlan ? (
-                           <>
-                               <div>
-                                   <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Objetivo (Editar)</label>
-                                   <textarea 
-                                       rows={3}
-                                       value={editObjective}
-                                       onChange={(e) => setEditObjective(e.target.value.toUpperCase())}
-                                       className="w-full border border-slate-300 rounded-xl p-3 text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none uppercase bg-white text-black"
-                                   />
-                               </div>
-                               
-                               <div className="bg-orange-50 p-4 rounded-xl border border-orange-100">
-                                   <label className="block text-xs font-bold text-orange-700 uppercase mb-2 flex items-center">
-                                       <ArrowRightLeft className="w-4 h-4 mr-2" />
-                                       Cambiar Contacto (Mover Cita)
-                                   </label>
-                                   <div className="relative">
-                                        <Search className="absolute left-3 top-3.5 h-4 w-4 text-orange-400" />
-                                        <input 
-                                            type="text" 
-                                            placeholder="BUSCAR NUEVO MÉDICO..." 
-                                            value={searchEditDoctorTerm} 
-                                            onChange={(e) => { setSearchEditDoctorTerm(e.target.value.toUpperCase()); if(e.target.value === '') setEditDoctorId(selectedVisitToReport.docId); }}
-                                            className="w-full pl-10 border border-orange-200 bg-white rounded-xl p-3 text-sm font-bold uppercase focus:ring-2 focus:ring-orange-500 outline-none text-black"
-                                        />
-                                    </div>
-                                    {searchEditDoctorTerm && editDoctorId === selectedVisitToReport.docId && (
-                                        <div className="mt-2 max-h-32 overflow-y-auto border border-orange-200 rounded-xl bg-white shadow-sm">
-                                            {filteredDoctorsForEdit.map(doc => (
-                                                <div 
-                                                    key={doc.id} 
-                                                    onClick={() => { setEditDoctorId(doc.id); setSearchEditDoctorTerm(doc.name); }}
-                                                    className="p-2 text-xs font-bold text-slate-600 hover:bg-orange-50 cursor-pointer uppercase border-b last:border-0"
-                                                >
-                                                    {doc.name}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                               </div>
-                           </>
+                           <div>
+                               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Objetivo (Editar)</label>
+                               <textarea 
+                                   rows={3}
+                                   value={editObjective}
+                                   onChange={(e) => setEditObjective(e.target.value.toUpperCase())}
+                                   className="w-full border border-slate-200 rounded-xl p-3 text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none uppercase"
+                               />
+                           </div>
                        ) : (
                            <>
                                <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
@@ -983,7 +889,7 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
 
                                <div>
                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Resultado</label>
-                                   <select value={reportOutcome} onChange={(e) => setReportOutcome(e.target.value)} className="w-full border border-slate-300 rounded-xl p-3 text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none bg-white text-black">
+                                   <select value={reportOutcome} onChange={(e) => setReportOutcome(e.target.value)} className="w-full border border-slate-200 rounded-xl p-3 text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none bg-white">
                                        <option value="SEGUIMIENTO">SEGUIMIENTO</option>
                                        <option value="COTIZACIÓN">COTIZACIÓN</option>
                                        <option value="INTERESADO">INTERESADO</option>
@@ -998,7 +904,7 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
                                        rows={3}
                                        value={reportNote}
                                        onChange={(e) => setReportNote(e.target.value.toUpperCase())}
-                                       className="w-full border border-slate-300 rounded-xl p-3 text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none uppercase resize-none bg-white text-black"
+                                       className="w-full border border-slate-200 rounded-xl p-3 text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none uppercase resize-none"
                                        placeholder="DETALLES DE LA VISITA..."
                                    />
                                </div>
@@ -1009,7 +915,7 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
                                        rows={2}
                                        value={reportFollowUp}
                                        onChange={(e) => setReportFollowUp(e.target.value.toUpperCase())}
-                                       className="w-full border border-slate-300 rounded-xl p-3 text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none uppercase resize-none bg-white text-black"
+                                       className="w-full border border-slate-200 rounded-xl p-3 text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none uppercase resize-none"
                                        placeholder="COMPROMISOS..."
                                    />
                                </div>
@@ -1085,17 +991,17 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
                        <div className="grid grid-cols-2 gap-4">
                            <div>
                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Desde</label>
-                               <input type="date" value={newTimeOff.startDate} onChange={(e) => setNewTimeOff({...newTimeOff, startDate: e.target.value})} className="w-full border border-slate-200 rounded-xl p-2 text-sm font-bold bg-white text-black" />
+                               <input type="date" value={newTimeOff.startDate} onChange={(e) => setNewTimeOff({...newTimeOff, startDate: e.target.value})} className="w-full border border-slate-200 rounded-xl p-2 text-sm font-bold" />
                            </div>
                            <div>
                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Hasta</label>
-                               <input type="date" value={newTimeOff.endDate} onChange={(e) => setNewTimeOff({...newTimeOff, endDate: e.target.value})} className="w-full border border-slate-200 rounded-xl p-2 text-sm font-bold bg-white text-black" />
+                               <input type="date" value={newTimeOff.endDate} onChange={(e) => setNewTimeOff({...newTimeOff, endDate: e.target.value})} className="w-full border border-slate-200 rounded-xl p-2 text-sm font-bold" />
                            </div>
                        </div>
                        
                        <div>
                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Duración</label>
-                           <select value={newTimeOff.duration} onChange={(e) => setNewTimeOff({...newTimeOff, duration: e.target.value as any})} className="w-full border border-slate-200 rounded-xl p-3 text-sm font-bold outline-none bg-white text-black">
+                           <select value={newTimeOff.duration} onChange={(e) => setNewTimeOff({...newTimeOff, duration: e.target.value as any})} className="w-full border border-slate-200 rounded-xl p-3 text-sm font-bold outline-none">
                                <option value="TODO EL DÍA">TODO EL DÍA</option>
                                <option value="2 A 4 HRS">2 A 4 HRS</option>
                                <option value="6 A 8 HRS">6 A 8 HRS</option>
@@ -1104,7 +1010,7 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
 
                        <div>
                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Motivo</label>
-                           <select value={newTimeOff.reason} onChange={(e) => setNewTimeOff({...newTimeOff, reason: e.target.value as any})} className="w-full border border-slate-200 rounded-xl p-3 text-sm font-bold outline-none bg-white text-black">
+                           <select value={newTimeOff.reason} onChange={(e) => setNewTimeOff({...newTimeOff, reason: e.target.value as any})} className="w-full border border-slate-200 rounded-xl p-3 text-sm font-bold outline-none">
                                <option value="JUNTA">JUNTA</option>
                                <option value="CAPACITACIÓN">CAPACITACIÓN</option>
                                <option value="PERMISO">PERMISO</option>
@@ -1114,7 +1020,7 @@ const ExecutiveCalendar: React.FC<ExecutiveCalendarProps> = ({ doctors, onUpdate
 
                        <div>
                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Notas</label>
-                           <textarea rows={2} value={newTimeOff.notes} onChange={(e) => setNewTimeOff({...newTimeOff, notes: e.target.value.toUpperCase()})} className="w-full border border-slate-300 rounded-xl p-3 text-sm uppercase outline-none resize-none bg-white text-black" />
+                           <textarea rows={2} value={newTimeOff.notes} onChange={(e) => setNewTimeOff({...newTimeOff, notes: e.target.value.toUpperCase()})} className="w-full border border-slate-200 rounded-xl p-3 text-sm uppercase outline-none resize-none" />
                        </div>
                    </div>
                    <div className="p-6 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
