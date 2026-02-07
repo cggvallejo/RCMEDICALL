@@ -14,12 +14,14 @@ app.use(express.json({ limit: '50mb' }));
 app.use(cors());
 
 // --- Database Connection ---
-// IMPORTANTE: Configurar MONGO_URI en Google Cloud Run -> Variables de Entorno
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/crm_medicall'; 
 
 mongoose.connect(MONGO_URI)
   .then(() => console.log("✅ MongoDB Conectado"))
-  .catch(err => console.error("❌ Error MongoDB:", err));
+  .catch(err => {
+      console.error("❌ Error MongoDB:", err);
+      // No detener el servidor si falla la DB, para permitir servir el frontend al menos
+  });
 
 // --- Schemas & Models ---
 const visitSchema = new mongoose.Schema({
@@ -127,15 +129,16 @@ app.get('/api/procedures', async (req, res) => {
     }
 });
 
-// --- Static Frontend Serving ---
-app.use(express.static(__dirname));
+// --- Static Frontend Serving (PRODUCCIÓN) ---
+// Servir archivos estáticos desde la carpeta 'dist' generada por Vite
+app.use(express.static(path.join(__dirname, 'dist')));
 
-// Manejo de rutas SPA para React
+// Manejo de rutas SPA (Single Page Application)
+// Cualquier ruta que no sea API, devuelve el index.html
 app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-// Puerto dinámico para Cloud Run (puerto 8080)
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor CRM escuchando en el puerto ${PORT}`);
